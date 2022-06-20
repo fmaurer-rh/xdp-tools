@@ -1,0 +1,62 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+divert(-1)
+#forloop definition taken from example in the M4 manual
+define(`forloop', `pushdef(`$1', `$2')_forloop($@)popdef(`$1')')
+define(`_forloop',`$4`'ifelse($1, decr(`$3'), `', `define(`$1', incr($1))$0($@)')')
+define(`NUM_PROGS',ifdef(`MAX_FILTER_ACTIONS', MAX_FILTER_ACTIONS, `10'))
+divert(0)dnl
+
+#include <linux/bpf.h>
+#include <linux/in.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+#include "common_kern_user.h"
+
+/* While 'const volatile' sounds a little like an oxymoron, there's reason
+ * behind the madness:
+ *
+ * - const places the data in rodata, where libbpf will mark it as read-only and
+ *   frozen on program load, letting the kernel do dead code elimination based
+ *   on the values.
+ *
+ * - volatile prevents the compiler from optimising away the checks based on the
+ *   compile-time value of the variables, which is important since we will be
+ *   changing the values before loading the program into the kernel.
+ */
+static volatile const struct xdp_filter_dispatcher_config conf = {};
+
+/* The volatile return value prevents the compiler from assuming it knows the
+ * return value and optimising based on that.
+ */
+forloop(`i', `0', NUM_PROGS,
+`__attribute__ ((noinline))
+int format(`filter%d', i)(struct xdp_md *ctx) {
+        volatile int ret = XDP_FILTER_DISPATCHER_RETVAL;
+
+        if (!ctx)
+          return XDP_ABORTED;
+        return ret;
+}
+')
+
+SEC("xdp")
+int xdp_filter_dispatcher(struct xdp_md *ctx)
+{
+        __u8 num_filters_enabled = conf.num_filters_enabled;
+        int ret;
+
+forloop(`i', `0', NUM_PROGS,
+`
+        if (num_filters_enabled < incr(i))
+                goto out;
+        ret = format(`filter%d', i)(ctx);
+        if (!((1U << ret) & conf.chain_call_actions[i]))
+                return ret;
+
+')
+out:
+        return XDP_PASS;
+}
+
+char _license[] SEC("license") = "GPL";
