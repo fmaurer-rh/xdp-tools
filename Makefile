@@ -15,7 +15,7 @@ endif
 
 include version.mk
 
-UTILS := xdp-filter xdp-filter-prog xdp-loader xdp-dump
+UTILS := filterc xdp-filter xdp-filter-prog xdp-loader xdp-dump
 SUBDIRS := lib $(UTILS)
 .PHONY: check_submodule help clobber distclean clean install test libxdp $(SUBDIRS)
 
